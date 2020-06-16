@@ -10,6 +10,7 @@ using Newtonsoft.Json;
 using System;
 using System.IO;
 using Microsoft.Azure.Storage.Blob;
+using Microsoft.Azure.Cosmos.Table;
 
 namespace processordersapi
 {
@@ -63,7 +64,7 @@ namespace processordersapi
 
         [FunctionName("savecombinedorders")]
         public static string SaveCombinedOrders([ActivityTrigger] CombineOrderRequest orderReceived,
-            [Table("combinedorders"), StorageAccount("AzureWebJobsStorage")] ICollector<CombinedOrdersTable> msg,
+            [Table("combinedorders"), StorageAccount("AzureWebJobsStorage")] CloudTable msg,
             ILogger log)
         {
             log.LogInformation($"Saving CombinedOrders {orderReceived.entityKey}.");
@@ -74,8 +75,21 @@ namespace processordersapi
                 combinedOrdersTable.PartitionKey = "BatchOrders";
                 combinedOrdersTable.RowKey = orderReceived.entityKey;
                 combinedOrdersTable.Text = orderReceived.content;
-                msg.Add(combinedOrdersTable);
+                var operation = TableOperation.Insert(combinedOrdersTable);
+                msg.ExecuteAsync(operation);
                 log.LogInformation($"Added combinedorders entry {orderReceived.entityKey} to CombinedOrdersTeable completed.");
+            }
+            catch (Microsoft.Azure.Cosmos.Table.StorageException exc)
+            {
+                if (exc.RequestInformation.HttpStatusCode == 409)
+                {
+                    log.LogInformation($"HttpStatusCode 409, entity already exists, handled for {orderReceived.entityKey}.");
+                }
+                else
+                {
+                    log.LogError($"Storing entry {orderReceived.entityKey} to combinedorders Table failed: {exc.Message}");
+                    return $"Storing entry {orderReceived.entityKey} to combinedorders Table failed: {exc.Message}";
+                }
             }
             catch (Exception exc)
             {
@@ -140,10 +154,8 @@ namespace processordersapi
         public string productInformationCSVUrl { get; set; }
     }
 
-    public partial class CombinedOrdersTable
+    public partial class CombinedOrdersTable : TableEntity
     {
-        public string PartitionKey { get; set; }
-        public string RowKey { get; set; }
         public string Text { get; set; }
     }
 }
